@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL}
+      WEB3_PROVIDER_URL: ${WEB3_PROVIDER_URL}
+      WEB3_EXPLORER_URL: ${WEB3_EXPLORER_URL}
+      SIMULATE_ATTESTATION: ${SIMULATE_ATTESTATION}
+
+  plaid-frontend:
+    build:
+      context: ./plaid-quickstart
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_PLAID_ENV: sandbox
+      REACT_APP_SERVER_HOST: http://backend:8080
+    depends_on:
+      - backend

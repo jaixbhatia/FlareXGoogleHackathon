@@ -1,0 +1,3 @@
+[submodule "plaid-quickstart"]
+	path = plaid-quickstart
+	url = https://github.com/plaid/quickstart.git
