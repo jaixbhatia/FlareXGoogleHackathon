@@ -12,3 +12,7 @@ wheels/
 .ruff_cache
 .vscode
 .DS_Store
+
+# keys
+cert.pem
+key.pem

@@ -15,6 +15,7 @@ Dependencies:
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import ssl
 
 from flare_ai_defai import (
     PlaidRouter,
@@ -106,7 +107,18 @@ def start() -> None:
     """
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8080)  # noqa: S104
+    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ssl_context.load_cert_chain(certfile="/app/cert.pem", keyfile="/app/key.pem")
+
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=8080,
+        ssl_keyfile="/app/key.pem",
+        ssl_certfile="/app/cert.pem"
+    )
+    server = uvicorn.Server(config)
+    server.run()
 
 
 if __name__ == "__main__":

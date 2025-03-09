@@ -19,6 +19,7 @@ const PlaidLink: React.FC<PlaidLinkProps> = ({ className, children }) => {
   const onSuccess = useCallback(
     async (public_token: string) => {
       try {
+        console.log(public_token)
         // Exchange public token for access token using our TEE backend
         const exchangeResponse = await fetch(`${BACKEND_URL}${API_PREFIX}/set_access_token`, {
           method: 'POST',

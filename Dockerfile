@@ -21,15 +21,23 @@ RUN uv sync --frozen
 # Stage 4: Final Image
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
-# Install nginx and Node.js
+# Install nginx, supervisor, nodejs, and Caddy
 RUN apt-get update && \
     apt-get install -y nginx supervisor curl gnupg && \
     mkdir -p /etc/apt/keyrings && \
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list && \
     apt-get update && \
-    apt-get install -y nodejs && \
+    apt-get install -y nodejs caddy && \
     rm -rf /var/lib/apt/lists/*
+
+# Copy SSL certificates for backend
+COPY cert.pem /app/cert.pem
+COPY key.pem /app/key.pem
+
+# Copy SSL certificates for Caddy
+COPY cert.pem /etc/caddy/cert.pem
+COPY key.pem /etc/caddy/key.pem
 
 WORKDIR /app
 
@@ -51,6 +59,9 @@ COPY --from=streetcred-builder /streetcred /app/streetcredui
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/sites-enabled/default
+
+# Copy Caddyfile
+COPY Caddyfile /etc/caddy/Caddyfile
 
 # Setup supervisor configuration
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf

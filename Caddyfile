@@ -1,0 +1,8 @@
+{
+    auto_https disable_redirects
+}
+
+https://localhost {
+    tls /etc/caddy/cert.pem /etc/caddy/key.pem
+    reverse_proxy localhost:3000
+}
