@@ -8,19 +8,13 @@ import { NavBar } from "@/components/nav-bar"
 import { ArrowRight, BanknoteIcon as Bank, Check, Wallet } from "lucide-react"
 import { CreditScoreDisplay } from "@/components/credit-score-display"
 import PlaidLink from "@/components/plaid-link"
+import MetaMaskConnect from "@/components/metamask-connect"
 import { usePlaid } from "@/lib/plaid"
 
 export default function CheckCreditScore() {
   const [walletConnected, setWalletConnected] = useState(false)
   const [scoreChecked, setScoreChecked] = useState(false)
   const { state: { linkSuccess: bankConnected } } = usePlaid()
-
-  const handleConnectWallet = () => {
-    // In a real app, this would trigger wallet connection
-    setTimeout(() => {
-      setWalletConnected(true)
-    }, 1500)
-  }
 
   const handleCheckScore = () => {
     // In a real app, this would fetch the credit score
@@ -32,7 +26,7 @@ export default function CheckCreditScore() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f5f5f5] to-white text-white">
       <NavBar />
-
+      
       <div className="container mx-auto px-4 pt-24 pb-16">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -114,13 +108,12 @@ export default function CheckCreditScore() {
                   </div>
                 </CardContent>
                 <CardFooter>
-                  <Button
+                  <MetaMaskConnect 
                     className="w-full bg-[#e72c61] hover:bg-[#e72c61]"
-                    disabled={walletConnected}
-                    onClick={handleConnectWallet}
+                    onConnect={() => setWalletConnected(true)}
                   >
                     {walletConnected ? "Connected" : "Connect Wallet"}
-                  </Button>
+                  </MetaMaskConnect>
                 </CardFooter>
               </Card>
 

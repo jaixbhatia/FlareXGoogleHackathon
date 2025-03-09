@@ -49,8 +49,6 @@ export default function LandingPage() {
               [231, 44, 97], // #e72c61
               [194, 15, 69], // #c20f45
             ]}
-            dotSize={3}
-            opacities={[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1]}
           />
         </div>
 

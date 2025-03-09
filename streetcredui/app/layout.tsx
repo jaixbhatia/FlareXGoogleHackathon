@@ -1,23 +1,20 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { Inter } from "next/font/google"
-import { Roboto } from "next/font/google"
+import { Outfit } from "next/font/google"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { PlaidProvider } from "@/lib/plaid"
+import { Providers } from "./providers"
 
-const inter = Inter({ subsets: ["latin"] })
-
-// Load Roboto font
-const roboto = Roboto({
+const outfit = Outfit({ 
   subsets: ["latin"],
-  weight: ["400", "500", "700"],
-  variable: "--roboto",
+  variable: "--font-outfit",
+  display: "swap",
 })
 
 export const metadata: Metadata = {
-  title: "streetcred - On-Chain Credit Scoring",
-  description: "The future of credit scoring is on-chain",
+  title: "StreetCred - The Future of Credit is On-Chain",
+  description: "StreetCred combines traditional financial data with on-chain activity to create the most accurate credit scoring system for the digital age.",
   icons: {
     icon: [
       {
@@ -43,25 +40,27 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={`${outfit.variable}`} suppressHydrationWarning>
       <head>
         <style>{`
           :root {
-            --roboto: ${roboto.style.fontFamily}, sans-serif;
+            --font-outfit: ${outfit.style.fontFamily}, sans-serif;
           }
         `}</style>
       </head>
-      <body className={`${roboto.variable} font-sans antialiased`}>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="system"
-          enableSystem
-          disableTransitionOnChange
-        >
-          <PlaidProvider>
-            {children}
-          </PlaidProvider>
-        </ThemeProvider>
+      <body className="font-sans antialiased">
+        <Providers>
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="system"
+            enableSystem
+            disableTransitionOnChange
+          >
+            <PlaidProvider>
+              {children}
+            </PlaidProvider>
+          </ThemeProvider>
+        </Providers>
       </body>
     </html>
   )
