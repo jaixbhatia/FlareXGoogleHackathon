@@ -11,29 +11,56 @@ import { Button } from "@/components/ui/button"
 export function CreditScoreDisplay() {
   const [score, setScore] = useState(0)
   const [progress, setProgress] = useState(0)
+  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      // Simulate score calculation
-      const finalScore = 742
-      let currentScore = 0
-      const interval = setInterval(() => {
-        currentScore += 10
-        setScore(currentScore)
-        setProgress((currentScore / 850) * 100)
-
-        if (currentScore >= finalScore) {
-          clearInterval(interval)
-          setScore(finalScore)
-          setProgress((finalScore / 850) * 100)
-        }
-      }, 30)
-
-      return () => clearInterval(interval)
-    }, 500)
-
-    return () => clearTimeout(timer)
+    // First try to get the credit score from sessionStorage (set by the Plaid link flow)
+    const storedScore = sessionStorage.getItem('creditScore')
+    let finalScore = storedScore ? parseInt(storedScore) : null
+    
+    // If no score in sessionStorage, fetch from API
+    if (!finalScore) {
+      // Fetch the credit score from the API
+      fetch('http://localhost:8080/api/routes/plaid/credit_score')
+        .then(response => response.json())
+        .then(data => {
+          console.log(`Credit score API data received:`, data)
+          finalScore = data.credit_score || 742 // Use the API score or fallback to 742
+          console.log(`Using credit score: ${finalScore}`)
+          // Store in sessionStorage for future use
+          sessionStorage.setItem('creditScore', finalScore!.toString())
+          animateScore(finalScore!)
+        })
+        .catch(error => {
+          console.error('Error fetching credit score:', error)
+          // Fallback to default score on error
+          animateScore(742)
+        })
+        .finally(() => {
+          setIsLoading(false)
+        })
+    } else {
+      // Use the score from sessionStorage
+      animateScore(finalScore)
+      setIsLoading(false)
+    }
   }, [])
+
+  // Function to animate the score counting up
+  const animateScore = (finalScore) => {
+    let currentScore = 0
+    const interval = setInterval(() => {
+      currentScore += 10
+      setScore(currentScore)
+      setProgress((currentScore / 850) * 100)
+
+      if (currentScore >= finalScore) {
+        clearInterval(interval)
+        setScore(finalScore)
+        setProgress((finalScore / 850) * 100)
+      }
+    }, 30)
+  }
 
   const getScoreColor = () => {
     if (score < 580) return "text-red-500"
@@ -83,14 +110,20 @@ export function CreditScoreDisplay() {
             <CardContent>
               <div className="flex flex-col items-center justify-center py-8">
                 <div className="relative mb-6">
-                  <motion.div
-                    className={`text-7xl font-bold ${getScoreColor()}`}
-                    initial={{ scale: 0.5 }}
-                    animate={{ scale: 1 }}
-                    transition={{ duration: 0.5, delay: 0.5, type: "spring" }}
-                  >
-                    {score}
-                  </motion.div>
+                  {isLoading ? (
+                    <div className="text-7xl font-bold text-gray-300 animate-pulse">
+                      ---
+                    </div>
+                  ) : (
+                    <motion.div
+                      className={`text-7xl font-bold ${getScoreColor()}`}
+                      initial={{ scale: 0.5 }}
+                      animate={{ scale: 1 }}
+                      transition={{ duration: 0.5, delay: 0.5, type: "spring" }}
+                    >
+                      {score}
+                    </motion.div>
+                  )}
                   <motion.div
                     className="absolute -top-2 -right-8 bg-green-500/20 text-[#e72c61] px-2 py-1 rounded-md text-sm font-medium flex items-center"
                     initial={{ opacity: 0 }}
@@ -108,7 +141,7 @@ export function CreditScoreDisplay() {
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.5, delay: 0.8 }}
                 >
-                  {getScoreCategory()} Credit
+                  {isLoading ? "Calculating..." : `${getScoreCategory()} Credit`}
                 </motion.div>
 
                 <div className="w-full max-w-md mb-4">

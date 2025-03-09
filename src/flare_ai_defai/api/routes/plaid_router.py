@@ -1,4 +1,5 @@
 import json
+from typing import Optional
 
 import structlog
 from fastapi import APIRouter, HTTPException
@@ -110,6 +111,9 @@ transfer_id = None
 user_token = None
 
 item_id = None
+# Store the credit score in memory - in production, store it in a secure
+# persistent data store.
+credit_score = 700  # Default value
 
 class ChatMessage(BaseModel):
     """
@@ -150,6 +154,32 @@ class PlaidTokenRequest(BaseModel):
     """
     access_token: str = Field(..., min_length=1)
     item_id: str = Field(..., min_length=1)
+
+
+class TransactionsSyncRequest(BaseModel):
+    """
+    Pydantic model for Plaid transactions sync request.
+
+    Attributes:
+        client_id (str): The Plaid client ID
+        secret (str): The Plaid secret key
+        access_token (str): The Plaid access token
+        cursor (str, optional): The cursor for pagination
+        count (int, optional): The number of transactions to fetch
+    """
+    client_id: str = Field(..., min_length=1)
+    secret: str = Field(..., min_length=1)
+    access_token: str = Field(..., min_length=1)
+    cursor: Optional[str] = None
+    count: Optional[int] = 500
+
+
+# Add a custom JSON encoder class at the top of the file
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (date, dt.datetime)):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 class PlaidRouter:
@@ -351,18 +381,173 @@ class PlaidRouter:
         
         @self._router.post("/set_access_token")
         async def get_access_token(request: PlaidPublicTokenRequest):
-            global access_token, item_id
+            global access_token, item_id, credit_score
             try:
+                print("==== STARTING TOKEN EXCHANGE ====")
+                print(f"Received public token: {request.public_token[:10]}...")
+                
                 exchange_request = ItemPublicTokenExchangeRequest(public_token=request.public_token)
+                print("Created exchange request object")
+                
                 exchange_response = client.item_public_token_exchange(exchange_request)
+                print("Successfully exchanged public token for access token")
+                print(f"Access token received: {exchange_response['access_token'][:10]}...")
+                print(f"Item ID received: {exchange_response['item_id']}")
+                
                 access_token = exchange_response['access_token']
-                self.logger.info(f"exchange response: {access_token}")
                 item_id = exchange_response['item_id']
-                return exchange_response.to_dict()
+                
+                # Log the access token (in production, you would never log sensitive tokens)
+                self.logger.info(
+                    "plaid_token_exchanged",
+                    item_id=item_id,
+                    token_length=len(access_token)
+                )
+                
+                # Initialize response dictionary with exchange response
+                response_data = {
+                    "exchange_response": exchange_response.to_dict()
+                }
+                print("Response data initialized with exchange response")
+                
+                # Fetch transactions
+                try:
+                    print("==== STARTING TRANSACTION SYNC ====")
+                    sync_request = plaid.model.transactions_sync_request.TransactionsSyncRequest(
+                        access_token=access_token,
+                        count=500
+                    )
+                    print("Created transaction sync request")
+                    
+                    transactions_response = client.transactions_sync(sync_request)
+                    print(f"Successfully fetched transactions")
+                    print(f"Added transactions: {len(transactions_response['added'])}")
+                    print(f"Modified transactions: {len(transactions_response['modified'])}")
+                    print(f"Removed transactions: {len(transactions_response['removed'])}")
+                    print(f"Has more: {transactions_response['has_more']}")
+                    
+                    if transactions_response['added']:
+                        # Print transaction data safely using our custom encoder
+                        first_transaction = transactions_response['added'][0].to_dict()
+                        print(f"Transaction keys: {list(first_transaction.keys())}")
+                        print(f"Sample transaction amount: {first_transaction.get('amount')}")
+                        print(f"Sample transaction date: {first_transaction.get('date')}")
+                        print(f"Sample transaction name: {first_transaction.get('name')}")
+                        
+                        # Try to safely print the full transaction with our custom encoder
+                        try:
+                            print(f"Sample transaction: {json.dumps(first_transaction, indent=2, cls=CustomJSONEncoder)[:200]}...")
+                        except Exception as json_err:
+                            print(f"Could not serialize transaction: {str(json_err)}")
+                    
+                    # Log transaction data summary to the same logger
+                    self.logger.info(
+                        "plaid_transactions_fetched",
+                        item_id=item_id,
+                        added_count=len(transactions_response['added']),
+                        modified_count=len(transactions_response['modified']),
+                        removed_count=len(transactions_response['removed']),
+                        has_more=transactions_response['has_more']
+                    )
+                    
+                    # Convert transactions to a format that can be serialized
+                    serializable_transactions = {
+                        "added": [self.make_serializable(t.to_dict()) for t in transactions_response['added']],
+                        "modified": [self.make_serializable(t.to_dict()) for t in transactions_response['modified']],
+                        "removed": [self.make_serializable(t.to_dict()) for t in transactions_response['removed']],
+                        "has_more": transactions_response['has_more'],
+                        "next_cursor": transactions_response['next_cursor']
+                    }
+                    
+                    response_data["transactions"] = serializable_transactions
+                    print("Added transactions to response data")
+                    
+                    # Call the conversation handler with a simple question
+                    print("==== STARTING AI CONVERSATION ====")
+                    # Create a simplified version of transactions for the AI
+                    simplified_transactions = {
+                        "transaction_count": len(serializable_transactions["added"]),
+                        "transactions": serializable_transactions["added"][:10]  # Just send the first 10 transactions
+                    }
+                    
+                    conversation_message = f"Generate a number looking at my transaction history. This number should be roughly in the ballpark of the magnitude of a credit score. Here are my transactions: {json.dumps(simplified_transactions, cls=CustomJSONEncoder)}. PLEASE RETURN ONLY THE CREDIT SCORE, NO OTHER TEXT NO MATTER WHAT. even if you are unsure or unfamiliar, I'd appreciate you giving me a number a lot!'"
+                    print(f"Sending message to AI (length: {len(conversation_message)})")
+                    
+                    conversation_response = await self.handle_conversation(conversation_message)
+                    print("Received response from AI")
+                    print(f"AI response preview: {conversation_response['response'][:200]}...")
+                    
+                    # Add the AI response to the response data
+                    response_data["ai_response"] = conversation_response["response"]
+                    
+                    # Extract credit score from AI response
+                    try:
+                        # Try to parse the credit score from the AI response
+                        # This assumes the AI returns just a number or a number with some text
+                        ai_response = conversation_response["response"].strip()
+                        # Extract digits from the response
+                        import re
+                        score_match = re.search(r'\b(\d{3})\b', ai_response)  # Look for 3-digit number
+                        
+                        if score_match:
+                            extracted_score = int(score_match.group(1))
+                            # Validate the score is in a reasonable range (300-850 for FICO)
+                            if 300 <= extracted_score <= 850:
+                                credit_score = extracted_score
+                                response_data["credit_score"] = credit_score
+                                print(f"Extracted credit score from AI: {credit_score}")
+                            else:
+                                credit_score = 715  # Fallback to default if outside valid range
+                                response_data["credit_score"] = credit_score
+                                print(f"Score out of range, using default: {credit_score}")
+                        else:
+                            credit_score = 710  # Fallback to default if no score found
+                            response_data["credit_score"] = credit_score
+                            print(f"No score found in AI response, using default: {credit_score}")
+                    except Exception as score_err:
+                        print(f"Error extracting credit score: {str(score_err)}")
+                        credit_score = 705  # Fallback to default on error
+                        response_data["credit_score"] = credit_score
+                        print(f"Using default credit score: {credit_score}")
+                    
+                    self.logger.info(
+                        "AI_RESPONSE_GENERATED",
+                        response_length=len(conversation_response["response"]),
+                        extracted_credit_score=credit_score
+                    )
+                    print("==== COMPLETED SUCCESSFULLY ====")
+                    
+                except Exception as e:
+                    print(f"==== ERROR IN TRANSACTION SYNC OR AI PROCESSING ====")
+                    print(f"Error: {str(e)}")
+                    print(f"Error type: {type(e).__name__}")
+                    import traceback
+                    print(f"Traceback: {traceback.format_exc()}")
+                    
+                    self.logger.exception("transactions_sync_failed", error=str(e))
+                    response_data["transactions_error"] = str(e)
+                    response_data["credit_score"] = 700  # Default fallback score
+                    print("Added error info and default credit score to response")
+                
+                # Return all collected data
+                print(f"Returning response with keys: {list(response_data.keys())}")
+                return response_data
+                
             except plaid.ApiException as e:
+                print(f"==== PLAID API ERROR ====")
+                print(f"Error: {str(e)}")
+                error_body = json.loads(e.body)
+                print(f"Error details: {json.dumps(error_body, indent=2)}")
+                
                 self.logger.error("plaid_token_exchange_failed", error=str(e))
                 return json.loads(e.body)
             except Exception as e:
+                print(f"==== UNEXPECTED ERROR ====")
+                print(f"Error: {str(e)}")
+                print(f"Error type: {type(e).__name__}")
+                import traceback
+                print(f"Traceback: {traceback.format_exc()}")
+                
                 self.logger.exception("unexpected_error", error=str(e))
                 raise HTTPException(
                     status_code=500,
@@ -386,6 +571,42 @@ class PlaidRouter:
                     detail=f"Failed to integrate wallet address: {str(e)}"
                 ) from e
 
+        @self._router.get("/credit_score")
+        async def get_credit_score():
+            """
+            Get the latest calculated credit score.
+            
+            Returns:
+                dict: Contains the credit score
+            """
+            # This endpoint returns the global credit score variable
+            try:
+                global credit_score
+                # Add detailed logging
+                self.logger.info(
+                    "credit_score_endpoint_called",
+                    credit_score=credit_score,
+                    timestamp=dt.datetime.now().isoformat(),
+                    request_id=str(uuid.uuid4())  # Generate a unique ID for this request
+                )
+                print(f"==== CREDIT SCORE ENDPOINT CALLED ====")
+                print(f"Returning credit score: {credit_score}")
+                print(f"Timestamp: {dt.datetime.now().isoformat()}")
+                
+                return {"credit_score": credit_score}
+            except Exception as e:
+                self.logger.exception("get_credit_score_failed", error=str(e))
+                print(f"==== CREDIT SCORE ENDPOINT ERROR ====")
+                print(f"Error: {str(e)}")
+                print(f"Error type: {type(e).__name__}")
+                import traceback
+                print(f"Traceback: {traceback.format_exc()}")
+                
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to get credit score: {str(e)}"
+                ) from e
+
         @self._router.post("/create_link_token")
         async def create_link_token():
             try:
@@ -405,6 +626,191 @@ class PlaidRouter:
                 raise HTTPException(
                     status_code=500,
                     detail="Failed to create link token"
+                ) from e
+
+        @self._router.post("/transactions/sync")
+        async def sync_transactions(request: TransactionsSyncRequest) -> dict:
+            """
+            Fetch transactions using Plaid's transactions/sync endpoint.
+            
+            Args:
+                request: Contains access_token, cursor, and count parameters
+                
+            Returns:
+                dict: Contains added, modified, removed transactions and a cursor
+            """
+            try:
+                # Configure a new client with the provided credentials
+                # This allows the endpoint to work with different credentials if needed
+                config = plaid.Configuration(
+                    host=plaid.Environment.Sandbox,
+                    api_key={
+                        'clientId': request.client_id,
+                        'secret': request.secret,
+                    }
+                )
+                api_client = plaid.ApiClient(config)
+                temp_client = plaid_api.PlaidApi(api_client)
+                
+                # Create the transactions sync request
+                sync_request = plaid.model.transactions_sync_request.TransactionsSyncRequest(
+                    access_token=request.access_token,
+                    cursor=request.cursor,
+                    count=request.count
+                )
+                
+                # Call the Plaid API
+                response = temp_client.transactions_sync(sync_request)
+                
+                # Log success (without sensitive data)
+                self.logger.info(
+                    "transactions_synced",
+                    added_count=len(response['added']),
+                    modified_count=len(response['modified']),
+                    removed_count=len(response['removed']),
+                    has_more=response['has_more']
+                )
+                
+                # Return the response
+                return response.to_dict()
+                
+            except plaid.ApiException as e:
+                error_response = json.loads(e.body)
+                self.logger.error(
+                    "transactions_sync_failed",
+                    error_type=error_response.get('error_type'),
+                    error_code=error_response.get('error_code'),
+                    error_message=error_response.get('error_message')
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Plaid error: {error_response.get('error_message')}"
+                ) from e
+            except Exception as e:
+                self.logger.exception("transactions_sync_failed", error=str(e))
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to sync transactions: {str(e)}"
+                ) from e
+
+        @self._router.post("/liabilities/get")
+        async def get_liabilities(request: dict):
+            """
+            Fetch liabilities for a given access token.
+            
+            Args:
+                request: Contains client_id, secret, and access_token
+                
+            Returns:
+                dict: Contains accounts and liabilities information
+            """
+            try:
+                # Configure a new client with the provided credentials
+                config = plaid.Configuration(
+                    host=plaid.Environment.Sandbox,
+                    api_key={
+                        'clientId': request.get('client_id'),
+                        'secret': request.get('secret'),
+                    }
+                )
+                api_client = plaid.ApiClient(config)
+                temp_client = plaid_api.PlaidApi(api_client)
+                
+                # Create the liabilities request
+                liabilities_request = plaid.model.liabilities_get_request.LiabilitiesGetRequest(
+                    access_token=request.get('access_token')
+                )
+                
+                # Call the Plaid API
+                response = temp_client.liabilities_get(liabilities_request)
+                
+                # Extract and log key information about liabilities
+                liability_summary = {
+                    "accounts_count": len(response['accounts']),
+                    "account_types": {},
+                    "liability_types": []
+                }
+                
+                # Summarize account types
+                for account in response['accounts']:
+                    account_type = account.get('type')
+                    if account_type in liability_summary["account_types"]:
+                        liability_summary["account_types"][account_type] += 1
+                    else:
+                        liability_summary["account_types"][account_type] = 1
+                
+                # Check for different liability types
+                if 'liabilities' in response:
+                    liability_summary["liability_types"] = list(response['liabilities'].keys())
+                    
+                    # Count specific liability types
+                    liability_summary["credit_count"] = len(response['liabilities'].get('credit', []))
+                    liability_summary["mortgage_count"] = len(response['liabilities'].get('mortgage', []))
+                    liability_summary["student_count"] = len(response['liabilities'].get('student', []))
+                
+                # Log the liability summary
+                self.logger.info(
+                    "liabilities_fetched",
+                    liability_summary=liability_summary
+                )
+                
+                # Return the response
+                return response.to_dict()
+                
+            except plaid.ApiException as e:
+                error_response = json.loads(e.body)
+                self.logger.error(
+                    "liabilities_fetch_failed",
+                    error_type=error_response.get('error_type'),
+                    error_code=error_response.get('error_code'),
+                    error_message=error_response.get('error_message')
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Plaid error: {error_response.get('error_message')}"
+                ) from e
+            except Exception as e:
+                self.logger.exception("liabilities_fetch_failed", error=str(e))
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to fetch liabilities: {str(e)}"
+                ) from e
+
+        @self._router.post("/conversation")
+        async def direct_conversation(message: ChatMessage) -> dict[str, str]:
+            """
+            Direct endpoint for conversation with the AI without semantic routing.
+            
+            This endpoint allows sending messages directly to the AI provider
+            without going through the semantic routing process. It's useful for
+            simple Q&A interactions about financial data and Plaid services.
+            
+            Args:
+                message: Validated chat message
+                
+            Returns:
+                dict[str, str]: Response from AI provider
+            """
+            try:
+                self.logger.info(
+                    "plaid_conversation_request",
+                    message_length=len(message.message)
+                )
+                
+                # Send the message directly to the AI provider
+                response = self.ai.send_message(message.message)
+                
+                self.logger.info(
+                    "plaid_conversation_response",
+                    response_length=len(response.text)
+                )
+                
+                return {"response": response.text}
+            except Exception as e:
+                self.logger.exception("plaid_conversation_failed", error=str(e))
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to process conversation: {str(e)}"
                 ) from e
 
     @property
@@ -464,10 +870,7 @@ class PlaidRouter:
             dict[str, str]: Response from the appropriate handler
         """
         handlers = {
-            SemanticRouterResponse.GENERATE_ACCOUNT: self.handle_generate_account,
-            SemanticRouterResponse.SEND_TOKEN: self.handle_send_token,
-            SemanticRouterResponse.SWAP_TOKEN: self.handle_swap_token,
-            SemanticRouterResponse.REQUEST_ATTESTATION: self.handle_attestation,
+
             SemanticRouterResponse.CONVERSATIONAL: self.handle_conversation,
         }
 
@@ -580,3 +983,16 @@ class PlaidRouter:
         """
         response = self.ai.send_message(message)
         return {"response": response.text}
+
+    # Add this helper method to the PlaidRouter class
+    def make_serializable(self, obj):
+        """Convert Plaid objects to JSON-serializable format"""
+        if isinstance(obj, dict):
+            return {k: self.make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self.make_serializable(i) for i in obj]
+        elif isinstance(obj, (date, dt.datetime)):
+            return obj.isoformat()
+        else:
+            return obj
+    
