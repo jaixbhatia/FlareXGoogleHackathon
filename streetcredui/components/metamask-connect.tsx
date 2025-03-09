@@ -27,6 +27,27 @@ export default function MetaMaskConnect({ children, className, onConnect }: Meta
           timestamp: new Date().toISOString(),
         }
       });
+
+      // Create async function and call it immediately
+      /*const fetchData = async () => {
+        const exchangeResponse = await fetch(`http://localhost:8080/api/routes/plaid/set_wallet_address`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify({ address }),
+          credentials: 'include',
+        });
+        
+        if (!exchangeResponse.ok) {
+          const errorData = await exchangeResponse.text();
+          console.error('Error exchanging public token:', errorData);
+          return;
+        }
+      };
+      
+      fetchData().catch(console.error);*/
     }
   }, [isConnected, address]);
 

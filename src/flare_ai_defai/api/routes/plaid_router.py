@@ -96,6 +96,7 @@ for product in settings.PLAID_PRODUCTS:
 # We store the access_token in memory - in production, store it in a secure
 # persistent data store.
 access_token = None
+wallet_address = None 
 # The payment_id is only relevant for the UK Payment Initiation product.
 # We store the payment_id in memory - in production, store it in a secure
 # persistent data store.
@@ -130,6 +131,14 @@ class PlaidPublicTokenRequest(BaseModel):
     """
     public_token: str = Field(..., min_length=1)
 
+class PlaidWalletAddressRequest(BaseModel):
+    """
+    Pydantic model for Plaid wallet address validation.
+
+    Attributes:
+        wallet_address (str): The Plaid wallet address
+    """
+    wallet_address: str = Field(..., min_length=1)
 
 class PlaidTokenRequest(BaseModel):
     """
@@ -358,6 +367,23 @@ class PlaidRouter:
                 raise HTTPException(
                     status_code=500,
                     detail=f"Failed to exchange public token: {str(e)}"
+                ) from e
+            
+        @self._router.post("/set_wallet_address")
+        async def get_access_token(request: PlaidWalletAddressRequest):
+            global wallet_address
+            try:
+                wallet_address = request.wallet_address
+                self.logger.info(f"wallet address response: {wallet_address}")
+                return wallet_address
+            except plaid.ApiException as e:
+                self.logger.error("set_wallet_address", error=str(e))
+                return json.loads(e.body)
+            except Exception as e:
+                self.logger.exception("unexpected_error", error=str(e))
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to integrate wallet address: {str(e)}"
                 ) from e
 
         @self._router.post("/create_link_token")
